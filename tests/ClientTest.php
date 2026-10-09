@@ -423,6 +423,177 @@ class ClientTest extends TestCase
     $client->getShipmentLabelContent('abc123');
   }
 
+  /**
+   * @return array<string, array{0: int, 1: string}>
+   */
+  public static function apiErrorResponsesProvider(): array
+  {
+    return [
+      '400 validation error' => [400, 'VALIDATION_ERROR'],
+      '409 cancellation not supported' => [409, 'CANCEL_NOT_SUPPORTED'],
+      '422 pallet rule violation' => [422, 'PALLET_RULE_VIOLATION'],
+      '429 rate limit exceeded' => [429, 'RATE_LIMIT_EXCEEDED'],
+    ];
+  }
+
+  #[DataProvider('apiErrorResponsesProvider')]
+  public function testApiErrorsExposeStatusCodeAndErrorDetails(int $statusCode, string $apiCode): void
+  {
+    $details = ['field' => ['Rejected value']];
+    $mock = new MockHandler([
+      new Response($statusCode, [], json_encode([
+        'success' => false,
+        'error' => [
+          'code' => $apiCode,
+          'message' => 'Request rejected',
+          'details' => $details,
+        ],
+      ], JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+      'http_errors' => false,
+    ]));
+
+    try {
+      $client->getShipmentTracking('abc123');
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame($statusCode, $exception->getStatusCode());
+      self::assertSame($statusCode, $exception->getCode());
+      self::assertSame($apiCode, $exception->getApiCode());
+      self::assertSame('Request rejected', $exception->getMessage());
+      self::assertSame($details, $exception->getDetails());
+    }
+  }
+
+  public function testApiExceptionKeepsExistingConstructorArgumentsCompatible(): void
+  {
+    $previous = new \RuntimeException('previous');
+    $exception = new ApiException('legacy message', 422, $previous, 'LEGACY_ERROR', ['field' => 'invalid']);
+
+    self::assertSame('legacy message', $exception->getMessage());
+    self::assertSame(422, $exception->getCode());
+    self::assertSame($previous, $exception->getPrevious());
+    self::assertSame('LEGACY_ERROR', $exception->getApiCode());
+    self::assertSame(['field' => 'invalid'], $exception->getDetails());
+    self::assertNull($exception->getStatusCode());
+    self::assertSame([], $exception->getResponseHeaders());
+  }
+
+  public function testApiExceptionExposesRequestMetadataRetryHeaderAndRateLimitHeaders(): void
+  {
+    $responsePayload = [
+      'success' => false,
+      'request_id' => 'req-123',
+      'timestamp' => '2026-10-09T10:00:00Z',
+      'error' => [
+        'code' => 'RATE_LIMIT_EXCEEDED',
+        'message' => 'Slow down',
+        'retry_after' => 12,
+      ],
+    ];
+    $mock = new MockHandler([
+      new Response(429, [
+        'Retry-After' => '30',
+        'X-RateLimit-Limit' => '100',
+        'X-RateLimit-Remaining' => '0',
+        'X-RateLimit-Reset' => '1791540000',
+      ], json_encode($responsePayload, JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+      'http_errors' => false,
+    ]));
+
+    try {
+      $client->listShipments();
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame('req-123', $exception->getRequestId());
+      self::assertSame('2026-10-09T10:00:00Z', $exception->getTimestamp());
+      self::assertSame('30', $exception->getRetryAfter());
+      self::assertSame($responsePayload, $exception->getResponseBody());
+      self::assertSame(json_encode($responsePayload, JSON_THROW_ON_ERROR), $exception->getRawResponseBody());
+      self::assertSame('30', $exception->getResponseHeaders()['Retry-After'][0]);
+      self::assertSame([
+        'X-RateLimit-Limit' => ['100'],
+        'X-RateLimit-Remaining' => ['0'],
+        'X-RateLimit-Reset' => ['1791540000'],
+      ], $exception->getRateLimitHeaders());
+    }
+  }
+
+  public function testApiExceptionUsesRetryAfterFromErrorBodyWhenHeaderIsMissing(): void
+  {
+    $mock = new MockHandler([
+      new Response(429, [], '{"success":false,"error":{"code":"RATE_LIMIT_EXCEEDED","retry_after":7.5}}'),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+      'http_errors' => false,
+    ]));
+
+    try {
+      $client->listShipments();
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame(7.5, $exception->getRetryAfter());
+    }
+  }
+
+  public function testHttpErrorWithJsonRetainsResponseAndPreviousRequestException(): void
+  {
+    $responsePayload = [
+      'success' => false,
+      'request_id' => 'server-request',
+      'error' => [
+        'code' => 'SERVER_ERROR',
+        'message' => 'Unexpected server error',
+        'details' => ['trace' => 'available'],
+      ],
+    ];
+    $mock = new MockHandler([
+      new Response(500, ['X-RateLimit-Remaining' => '4'], json_encode($responsePayload, JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+    ]));
+
+    try {
+      $client->listShipments();
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame(500, $exception->getStatusCode());
+      self::assertSame('SERVER_ERROR', $exception->getApiCode());
+      self::assertSame('server-request', $exception->getRequestId());
+      self::assertSame($responsePayload, $exception->getResponseBody());
+      self::assertSame('4', $exception->getRateLimitHeaders()['X-RateLimit-Remaining'][0]);
+      self::assertInstanceOf(\GuzzleHttp\Exception\ResponseException::class, $exception->getPrevious());
+    }
+  }
+
+  public function testEmptyHttpErrorBodyDoesNotCauseSecondaryDecodeFailure(): void
+  {
+    $mock = new MockHandler([
+      new Response(500, [], ''),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+      'http_errors' => false,
+    ]));
+
+    try {
+      $client->listShipments();
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame(500, $exception->getStatusCode());
+      self::assertSame('', $exception->getRawResponseBody());
+      self::assertNull($exception->getResponseBody());
+      self::assertInstanceOf(\JsonException::class, $exception->getPrevious());
+    }
+  }
+
   public function testApiErrorIncludesCodeAndDetails(): void
   {
     $mock = new MockHandler([
@@ -468,10 +639,16 @@ class ClientTest extends TestCase
       'http_errors' => false,
     ]));
 
-    $this->expectException(ApiException::class);
-    $this->expectExceptionMessage('The shipment tracking request failed with HTTP status 500.');
-
-    $client->getShipmentTracking('abc123');
+    try {
+      $client->getShipmentTracking('abc123');
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame('The shipment tracking request failed with HTTP status 500.', $exception->getMessage());
+      self::assertSame(500, $exception->getStatusCode());
+      self::assertSame('Internal Server Error', $exception->getRawResponseBody());
+      self::assertNull($exception->getResponseBody());
+      self::assertInstanceOf(\JsonException::class, $exception->getPrevious());
+    }
   }
 
   public function testHttpErrorWithJsonBodyButNoErrorKeyUsesStatusMessage(): void
@@ -699,14 +876,19 @@ class ClientTest extends TestCase
 
   public function testRequestWrapsGuzzleExceptionInApiException(): void
   {
-    $mock = new MockHandler([new TransferException('Connection failed', new GuzzleRequest('GET', '/'))]);
+    $transferException = new TransferException('Connection failed', new GuzzleRequest('GET', '/'));
+    $mock = new MockHandler([$transferException]);
     $guzzle = new GuzzleClient(['handler' => HandlerStack::create($mock)]);
     $client = new Client('test-key', 'https://api.example.com', $guzzle);
 
-    $this->expectException(ApiException::class);
-    $this->expectExceptionMessage('Connection failed');
-
-    $client->getShipmentLabelContent('abc123');
+    try {
+      $client->getShipmentLabelContent('abc123');
+      self::fail('Expected an ApiException.');
+    } catch (ApiException $exception) {
+      self::assertSame('Connection failed', $exception->getMessage());
+      self::assertSame($transferException, $exception->getPrevious());
+      self::assertNull($exception->getStatusCode());
+    }
   }
 
   public function testCreateShipmentAcceptsRawArray(): void

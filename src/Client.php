@@ -4,8 +4,10 @@ namespace NexCargo;
 
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Exception\ResponseException;
 use NexCargo\Models\QuoteRequest;
 use NexCargo\Models\ShipmentRequest;
+use Throwable;
 
 class Client
 {
@@ -187,35 +189,69 @@ class Client
    */
   private function requestJson(string $method, string $uri, array $options, string $resource): array
   {
+    $previousException = null;
     try {
       $response = $this->httpClient->request($method, $uri, $options);
     } catch (GuzzleException $exception) {
-      throw new ApiException($exception->getMessage(), $exception->getCode(), $exception);
+      if (!$exception instanceof ResponseException) {
+        throw new ApiException($exception->getMessage(), $exception->getCode(), $exception);
+      }
+
+      $previousException = $exception;
+      $response = $exception->getResponse();
     }
 
     $statusCode = $response->getStatusCode();
     $isHttpError = $statusCode < 200 || $statusCode >= 300;
+    $responseHeaders = $response->getHeaders();
+    $rawResponseBody = (string) $response->getBody();
 
     try {
-      $payload = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+      $payload = json_decode($rawResponseBody, true, 512, JSON_THROW_ON_ERROR);
     } catch (\JsonException $exception) {
       if ($isHttpError) {
         throw new ApiException(
           "The {$resource} request failed with HTTP status {$statusCode}.",
           $statusCode,
-          $exception
+          $previousException ?? $exception,
+          responseHeaders: $responseHeaders,
+          statusCode: $statusCode,
+          rawResponseBody: $rawResponseBody
         );
       }
 
-      throw new ApiException("The {$resource} response contains invalid JSON.", 0, $exception);
+      throw new ApiException(
+        "The {$resource} response contains invalid JSON.",
+        0,
+        $exception,
+        responseHeaders: $responseHeaders,
+        statusCode: $statusCode,
+        rawResponseBody: $rawResponseBody
+      );
     }
 
     if (!is_array($payload)) {
-      throw new ApiException("The {$resource} response must contain a JSON object.");
+      throw new ApiException(
+        "The {$resource} response must contain a JSON object.",
+        $isHttpError ? $statusCode : 0,
+        $previousException,
+        responseHeaders: $responseHeaders,
+        responseBody: $payload,
+        statusCode: $statusCode,
+        rawResponseBody: $rawResponseBody
+      );
     }
 
     if ($isHttpError || ($payload['success'] ?? null) !== true) {
-      throw $this->buildErrorException($payload, $resource, $statusCode, $isHttpError);
+      throw $this->buildErrorException(
+        $payload,
+        $resource,
+        $statusCode,
+        $isHttpError,
+        $responseHeaders,
+        $rawResponseBody,
+        $previousException
+      );
     }
 
     return $payload;
@@ -225,12 +261,16 @@ class Client
    * Build an ApiException describing a failed or unsuccessful response.
    *
    * @param array<string, mixed> $payload
+   * @param array<string, array<int, string>> $responseHeaders
    */
   private function buildErrorException(
     array $payload,
     string $resource,
     int $statusCode,
-    bool $isHttpError
+    bool $isHttpError,
+    array $responseHeaders,
+    string $rawResponseBody,
+    ?Throwable $previousException
   ): ApiException {
     $error = $payload['error'] ?? null;
 
@@ -239,7 +279,15 @@ class Client
         ? "The {$resource} request failed with HTTP status {$statusCode}."
         : "The {$resource} response was not successful.";
 
-      return new ApiException($message, $statusCode);
+      return new ApiException(
+        $message,
+        $statusCode,
+        $previousException,
+        responseHeaders: $responseHeaders,
+        responseBody: $payload,
+        statusCode: $statusCode,
+        rawResponseBody: $rawResponseBody
+      );
     }
 
     $message = is_string($error['message'] ?? null)
@@ -247,7 +295,49 @@ class Client
       : "The {$resource} request failed.";
     $apiCode = is_string($error['code'] ?? null) ? $error['code'] : null;
     $details = is_array($error['details'] ?? null) ? $error['details'] : [];
+    $requestId = $this->stringMetadata($payload, $error, 'request_id');
+    $timestamp = $this->stringMetadata($payload, $error, 'timestamp');
+    $retryAfter = $this->getRetryAfter($responseHeaders, $error);
 
-    return new ApiException($message, $statusCode, null, $apiCode, $details);
+    return new ApiException(
+      $message,
+      $statusCode,
+      $previousException,
+      $apiCode,
+      $details,
+      $requestId,
+      $timestamp,
+      $retryAfter,
+      $responseHeaders,
+      $payload,
+      $statusCode,
+      $rawResponseBody
+    );
+  }
+
+  /**
+   * @param array<string, mixed> $payload
+   * @param array<string, mixed> $error
+   */
+  private function stringMetadata(array $payload, array $error, string $key): ?string
+  {
+    $value = $payload[$key] ?? $error[$key] ?? null;
+    return is_string($value) ? $value : null;
+  }
+
+  /**
+   * @param array<string, array<int, string>> $responseHeaders
+   * @param array<string, mixed> $error
+   */
+  private function getRetryAfter(array $responseHeaders, array $error): int|float|string|null
+  {
+    foreach ($responseHeaders as $name => $values) {
+      if (strtolower($name) === 'retry-after' && isset($values[0]) && $values[0] !== '') {
+        return $values[0];
+      }
+    }
+
+    $retryAfter = $error['retry_after'] ?? null;
+    return is_int($retryAfter) || is_float($retryAfter) || is_string($retryAfter) ? $retryAfter : null;
   }
 }
