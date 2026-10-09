@@ -25,102 +25,133 @@ For local development, install the dependencies and configure the project with:
 composer setup
 ```
 
-## API overview
+## API version
 
-The SDK targets the following endpoints from the original API documentation:
+This SDK follows NexCargo documentation version 2.11.
 
-- `POST /api/v1/shipments` for creating a shipment
-- `POST /api/v1/shipments/quote` for requesting a quote
-- `GET /api/v1/shipments/{id}/label` for retrieving a label
-- `GET /api/v1/shipments/{id}/tracking` for tracking information
-- `DELETE /api/v1/shipments/{id}` for cancelling a shipment
+### Endpoints
 
-## Usage
+| Method | Endpoint | Client method |
+|--------|----------|---------------|
+| POST | `/api/v1/shipments` | `createShipment()` |
+| POST | `/api/v1/shipments/quote` | `quoteShipment()` |
+| GET | `/api/v1/shipments` | `listShipments()` |
+| GET | `/api/v1/shipments/{identifier}` | `getShipment()` |
+| GET | `/api/v1/shipments/{id}/label` | `getShipmentLabelContent()` |
+| GET | `/api/v1/shipments/{id}/tracking` | `getShipmentTracking()` |
+| DELETE | `/api/v1/shipments/{id}` | `cancelShipment()` |
 
-You can build requests either with serialized model objects or with plain payload arrays. Both styles are accepted by the client methods.
+All methods except `getShipmentLabelContent()` return the full decoded JSON response as an associative array; no response fields are dropped.
+
+### Client
+
+Pass the API key and the host base URL (without `/api/v1`). Use the sandbox host and a sandbox key for test bookings and your production host and key for live use; the SDK does not switch environments itself.
 
 ```php
-<?php
-
 use NexCargo\Client;
-use NexCargo\Models\Address;
-use NexCargo\Models\Dimensions;
-use NexCargo\Models\Parcel;
-use NexCargo\Models\ShipmentRequest;
-use NexCargo\Models\QuoteRequest;
 
 $client = new Client('your-api-key', 'https://api.example.com');
 ```
 
-## Shipment creation
+Requests are sent with `Authorization: Bearer <key>`, `Accept: application/json` and `Content-Type: application/json`.
 
-The shipment endpoint expects a payload with the core booking fields and nested pickup, delivery and package data.
+### Shipment creation
+
+Requests accept model objects or plain arrays.
 
 ```php
+use NexCargo\Models\Address;
+use NexCargo\Models\Dimensions;
+use NexCargo\Models\Parcel;
+use NexCargo\Models\QuoteRequest;
+use NexCargo\Models\ShipmentRequest;
+
 $pickup = new Address([
-    'name' => 'Musterfirma GmbH',
-    'street' => 'Musterstraße',
-    'house_number' => '123',
-    'zipcode' => '50667',
-    'city' => 'Köln',
-    'country' => 'DE',
+  'name' => 'Musterfirma GmbH',
+  'street' => 'Musterstraße',
+  'house_number' => '123',
+  'zipcode' => '50667',
+  'city' => 'Köln',
+  'country' => 'DE',
 ]);
 
 $delivery = new Address([
-    'name' => 'Empfänger GmbH',
-    'street' => 'Beispielweg',
-    'house_number' => '456',
-    'zipcode' => '10115',
-    'city' => 'Berlin',
-    'country' => 'DE',
+  'name' => 'Empfänger GmbH',
+  'street' => 'Beispielweg',
+  'house_number' => '456',
+  'zipcode' => '10115',
+  'city' => 'Berlin',
+  'country' => 'DE',
 ]);
 
 $package = new Parcel([
-    'weight' => 15.5,
-    'dimensions' => new Dimensions([
-        'length' => 60,
-        'width' => 40,
-        'height' => 30,
-    ]),
+  'weight' => 15.5,
+  'dimensions' => new Dimensions([
+    'length' => 60,
+    'width' => 40,
+    'height' => 30
+  ]),
 ]);
 
-$shipment = new ShipmentRequest([
-    'carrier' => 'auto',
-    'pickup_date' => '2026-01-15',
-    'pickup_time_from' => '09:00',
-    'pickup_time_to' => '12:00',
-    'delivery_date' => '2026-01-16',
-    'delivery_time_from' => '08:00',
-    'delivery_time_to' => '18:00',
-    'pickup' => $pickup,
-    'delivery' => $delivery,
-    'packages' => [$package],
-]);
+$payload = [
+  'carrier' => 'auto',
+  'pickup_date' => '2026-01-15',
+  'pickup_time_from' => '09:00',
+  'pickup_time_to' => '12:00',
+  'delivery_date' => '2026-01-16',
+  'delivery_time_from' => '08:00',
+  'delivery_time_to' => '18:00',
+  'pickup' => $pickup,
+  'delivery' => $delivery,
+  'packages' => [$package],
+];
 
-$shipmentResponse = $client->createShipment($shipment);
+$response = $client->createShipment(new ShipmentRequest($payload));
 ```
 
-## Quote request
+Optional fields are:
+
+- `Address`: `name2`, `phone`, `email`, `notes`, `contact_person`
+- `Parcel`: `quantity`, `type`, `description`
+- Request: `reference`, `content_value`, `content_description`, `services`, `pallet`
+
+The SDK does not truncate or validate values (for example the documented limits of 50 characters for names and 255 for notes); the server validates.
+
+### Quote request
 
 The quote endpoint uses the same request shape as shipment creation, but the carrier field is optional.
 
 ```php
-$quote = new QuoteRequest([
-    'pickup_date' => '2026-01-15',
-    'pickup_time_from' => '09:00',
-    'pickup_time_to' => '12:00',
-    'delivery_date' => '2026-01-16',
-    'delivery_time_from' => '08:00',
-    'delivery_time_to' => '18:00',
-    'pickup' => $pickup,
-    'delivery' => $delivery,
-    'packages' => [$package],
-]);
-
-$quoteResponse = $client->quoteShipment($quote);
+unset($payload['carrier']);
+$quote = $client->quoteShipment(new QuoteRequest($payload));
 ```
 
-## Other endpoints
+### List and fetch shipments
+
+```php
+$list = $client->listShipments([
+  'status' => 'IN_DELIVERY',
+  'carrier' => 'ctl',
+  'from_date' => '2026-01-01',
+  'to_date' => '2026-01-31',
+  'reference' => 'ORDER-1',
+  'per_page' => 25,
+  'page' => 1,
+]);
+
+$shipment = $client->getShipment('ORDER-1/A');
+```
+
+Documented `status` values: `UNPROCESSED`, `STATION_OUTBOUND`, `IN_DELIVERY`, `DELIVERED`, `CANCELLED`. Values are passed through as given, not validated.
+
+Only `status`, `carrier`, `from_date`, `to_date`, `reference`, `per_page` and `page` are sent; other keys are ignored, `null` values are dropped and `0` is kept. The identifier may be the internal shipment id, the tracking number or your customer reference; it is URL-encoded.
+
+- `tracking_number` is the recommended persistent key. Store it.
+- The internal shipment `id` can change after a carrier reconciliation.
+- `reference` response can be `null`.
+- Carrier references may be contained in `references`.
+
+### Label, tracking, cancellation
 
 ```php
 $pdfContents = $client->getShipmentLabelContent($trackingNumber);
@@ -128,5 +159,76 @@ file_put_contents('shipment-label.pdf', $pdfContents);
 
 $tracking = $client->getShipmentTracking($trackingNumber);
 $cancelled = $client->cancelShipment($trackingNumber);
-$cancellationMessage = $cancelled['data']['message'];
 ```
+
+`getShipmentLabelContent()` returns the decoded PDF bytes and throws `ApiException` if the label is missing or `null`, the format or encoding is not PDF/base64, the content is empty, or the base64 is invalid. The SDK does not save files.
+
+Cancelling a shipment that cannot be cancelled returns the API error `CANCEL_NOT_SUPPORTED` (HTTP 409).
+
+### CTL pallet options
+
+Add `pallet` to a shipment or quote request, as `PalletOptions` or an array. Supported fields: `product`, `private_recipient`, `avis`, `fixed_date`, `fixed_time`, `services`, `insurance`, `insurance_value`, `driver_avis_pickup`.
+
+```php
+use NexCargo\Models\PalletOptions;
+
+$payload['carrier'] = 'ctl';
+$payload['pallet'] = new PalletOptions([
+  'private_recipient' => false,
+  'insurance' => true,
+  'insurance_value' => 500,
+  'services' => ['avis_email', 'zf_buchung'],
+]);
+```
+
+`pallet.services` values:
+
+| Value | Meaning |
+|-------|---------|
+| `palettentausch` | Pallet exchange (`Europalette`/`Industriepalette` only) |
+| `tausch_gitterbox` | Gitterbox exchange (`Gitterbox` only) |
+| `zf_buchung` | Time-slot booking |
+| `avis_telefon` | Phone notification |
+| `avis_email` | Email notification |
+| `unterschrift_original_ls` | Signed original delivery note returned |
+| `gefahrgut` | Dangerous goods |
+
+For CTL, `packages[].type` (`Parcel` `type`) defaults to a one-way pallet `Einwegpalette`. Allowed values (long name or code): `Europalette`/`FP`, `Einwegpalette`/`EP`, `Industriepalette`/`E2`, `E1`, `Halbpalette`/`HP`, `Gitterbox`/`GP`, `CHEP`/`CP`, `Kiste`/`KI`, `IBC`/`IB`, `Karton`/`KT`, `Paket`/`PA`, `Rollcontainer`/`RC`, `Fass`/`FA`, `Sack`/`SA`.
+
+```php
+$package = new Parcel(['weight' => 250.0, 'type' => 'Europalette']);
+```
+
+The SDK passes these values through without validation.
+The SDK does not apply CTL rules, set the carrier or correct dimensions, weights or products. Server-side data such as `data.adjustments` and `meta.pallet` is returned unchanged.
+
+## Error handling
+
+Failed requests throw `NexCargo\ApiException`.
+
+```php
+use NexCargo\ApiException;
+
+try {
+  $client->createShipment(new ShipmentRequest($payload));
+} catch (ApiException $e) {
+  $e->getStatusCode();      // HTTP status, if available
+  $e->getApiCode();         // e.g. VALIDATION_ERROR, PALLET_RULE_VIOLATION
+  $e->getMessage();
+  $e->getDetails();
+  $e->getRequestId();
+  $e->getTimestamp();
+  $e->getResponseBody();    // decoded body, or null
+  $e->getRawResponseBody();
+  $e->getResponseHeaders();
+  $e->getPrevious();        // original Guzzle exception, if any
+}
+```
+
+Invalid or empty error bodies do not cause a second error.
+
+## Rate limits
+
+On HTTP 429 (`RATE_LIMIT_EXCEEDED`), `getRetryAfter()` returns `Retry-After` from the header, falling back to `error.retry_after` from the body. `getRateLimitHeaders()` returns the `X-RateLimit-*` response headers.
+
+The SDK never retries automatically, and `POST /shipments` must never be retried blindly because it can create duplicate shipments. Check with `listShipments(['reference' => ...])` before repeating a booking.
