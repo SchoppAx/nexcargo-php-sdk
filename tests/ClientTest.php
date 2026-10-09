@@ -154,6 +154,136 @@ class ClientTest extends TestCase
     $this->assertSame($expectedBody, json_decode((string) $request->getBody(), true));
   }
 
+  public function testListShipmentsWithoutFilters(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $responsePayload = ['success' => true, 'data' => [], 'meta' => ['page' => 1], 'extra' => 'kept'];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], json_encode($responsePayload, JSON_THROW_ON_ERROR)),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+
+    $result = $client->listShipments();
+    $request = $this->getHistoryRequest($history);
+
+    $this->assertSame($responsePayload, $result);
+    $this->assertSame('GET', $request->getMethod());
+    $this->assertSame('/api/v1/shipments', (string) $request->getUri()->getPath());
+    $this->assertSame('', $request->getUri()->getQuery());
+  }
+
+  public function testListShipmentsSendsAllAllowedFiltersAndPagination(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], '{"success":true,"data":[]}'),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+    $filters = [
+      'status' => 'created',
+      'carrier' => 'fast',
+      'from_date' => '2026-01-01',
+      'to_date' => '2026-01-31',
+      'reference' => 'ORDER-1',
+      'per_page' => 25,
+      'page' => 2,
+    ];
+
+    $client->listShipments($filters);
+    $request = $this->getHistoryRequest($history);
+    parse_str($request->getUri()->getQuery(), $query);
+
+    $this->assertSame([
+      'status' => 'created',
+      'carrier' => 'fast',
+      'from_date' => '2026-01-01',
+      'to_date' => '2026-01-31',
+      'reference' => 'ORDER-1',
+      'per_page' => '25',
+      'page' => '2',
+    ], $query);
+  }
+
+  public function testListShipmentsOmitsNullAndUnsupportedFiltersButKeepsZero(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], '{"success":true,"data":[]}'),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+
+    $client->listShipments([
+      'status' => null,
+      'carrier' => 'fast',
+      'reference' => null,
+      'per_page' => 0,
+      'page' => 0,
+      'ignored' => 'not forwarded',
+    ]);
+    $request = $this->getHistoryRequest($history);
+    parse_str($request->getUri()->getQuery(), $query);
+
+    $this->assertSame(['carrier' => 'fast', 'per_page' => '0', 'page' => '0'], $query);
+  }
+
+  public function testGetShipmentAcceptsNumericIdentifierAndPreservesResponse(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $responsePayload = ['success' => true, 'shipment' => ['id' => 123], 'unknown_field' => ['kept' => true]];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], json_encode($responsePayload, JSON_THROW_ON_ERROR)),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+
+    $result = $client->getShipment(123);
+    $request = $this->getHistoryRequest($history);
+
+    $this->assertSame($responsePayload, $result);
+    $this->assertSame('GET', $request->getMethod());
+    $this->assertSame('/api/v1/shipments/123', (string) $request->getUri()->getPath());
+  }
+
+  public function testGetShipmentAcceptsTrackingNumberIdentifier(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], '{"success":true,"data":{"tracking_number":"49111091097"}}'),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+
+    $client->getShipment('49111091097');
+    $request = $this->getHistoryRequest($history);
+
+    $this->assertSame('/api/v1/shipments/49111091097', (string) $request->getUri()->getPath());
+  }
+
+  public function testGetShipmentEncodesCustomerReferenceAsPathSegment(): void
+  {
+    /** @var History $history */
+    $history = [];
+    $handlerStack = HandlerStack::create(new MockHandler([
+      new Response(200, [], '{"success":true,"data":[]}'),
+    ]));
+    $handlerStack->push(Middleware::history($history));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+    $identifier = 'order/one #?';
+
+    $client->getShipment($identifier);
+    $request = $this->getHistoryRequest($history);
+
+    $this->assertSame('/api/v1/shipments/order%2Fone%20%23%3F', (string) $request->getUri()->getPath());
+  }
+
   public function testGetShipmentLabelContentUsesLabelEndpoint(): void
   {
     /** @var History $history */

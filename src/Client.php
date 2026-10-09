@@ -59,6 +59,45 @@ class Client
   }
 
   /**
+   * List shipments, optionally filtered by the supported query parameters.
+   *
+   * @param array<string, mixed> $filters
+   * @return array<string, mixed>
+   * @throws ApiException
+   */
+  public function listShipments(array $filters = []): array
+  {
+    $allowedFilters = ['status', 'carrier', 'from_date', 'to_date', 'reference', 'per_page', 'page'];
+    $query = array_filter(
+      array_intersect_key($filters, array_flip($allowedFilters)),
+      static fn ($value) => $value !== null
+    );
+
+    return $this->requestJson(
+      'GET',
+      '/api/v1/shipments',
+      $query === [] ? [] : ['query' => $query],
+      'shipment list'
+    );
+  }
+
+  /**
+   * Get a shipment by its identifier.
+   *
+   * @return array<string, mixed>
+   * @throws ApiException
+   */
+  public function getShipment(string|int $identifier): array
+  {
+    return $this->requestJson(
+      'GET',
+      '/api/v1/shipments/' . rawurlencode((string) $identifier),
+      [],
+      'shipment retrieval'
+    );
+  }
+
+  /**
    * Download and decode the PDF shipment label.
    *
    * @return string Decoded PDF file contents.
