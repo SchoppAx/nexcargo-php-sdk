@@ -6,6 +6,9 @@ class Parcel
 {
   private ?float $weight = null;
   private ?Dimensions $dimensions = null;
+  private ?int $quantity = null;
+  private ?string $type = null;
+  private ?string $description = null;
 
   /**
    * @param array<string, mixed> $data
@@ -29,6 +32,9 @@ class Parcel
   {
     $data = [
       'weight' => $this->weight,
+      'quantity' => $this->quantity,
+      'type' => $this->type,
+      'description' => $this->description,
     ];
 
     if ($this->dimensions !== null) {
