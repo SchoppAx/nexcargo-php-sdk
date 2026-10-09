@@ -120,7 +120,7 @@ class Client
     }
 
     $content = $label['content'] ?? null;
-    if (!is_string($content)) {
+    if (!is_string($content) || $content === '') {
       throw new ApiException('The shipment label response is missing base64 content.');
     }
 

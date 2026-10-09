@@ -429,6 +429,60 @@ class ClientTest extends TestCase
     $client->getShipmentLabelContent('abc123');
   }
 
+  public function testGetShipmentLabelContentRejectsNullLabel(): void
+  {
+    $mock = new MockHandler([
+      new Response(200, [], json_encode(['success' => true, 'data' => ['label' => null]], JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+    ]));
+
+    $this->expectException(ApiException::class);
+    $this->expectExceptionMessage('The shipment label response is missing the label data.');
+
+    $client->getShipmentLabelContent('abc123');
+  }
+
+  public function testGetShipmentLabelContentRejectsEmptyContent(): void
+  {
+    $mock = new MockHandler([
+      new Response(200, [], json_encode([
+        'success' => true,
+        'data' => ['label' => ['format' => 'pdf', 'encoding' => 'base64', 'content' => '']],
+      ], JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+    ]));
+
+    $this->expectException(ApiException::class);
+    $this->expectExceptionMessage('The shipment label response is missing base64 content.');
+
+    $client->getShipmentLabelContent('abc123');
+  }
+
+  public function testGetShipmentLabelContentKeepsApiErrors(): void
+  {
+    $mock = new MockHandler([
+      new Response(422, [], json_encode([
+        'success' => false,
+        'error' => ['code' => 'VALIDATION_ERROR', 'message' => 'Invalid.'],
+      ], JSON_THROW_ON_ERROR)),
+    ]);
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient([
+      'handler' => HandlerStack::create($mock),
+    ]));
+
+    try {
+      $client->getShipmentLabelContent('abc123');
+      $this->fail('Expected ApiException.');
+    } catch (ApiException $exception) {
+      $this->assertSame('VALIDATION_ERROR', $exception->getApiCode());
+      $this->assertSame(422, $exception->getStatusCode());
+    }
+  }
+
   /**
    * @return array<string, array{0: int, 1: string}>
    */
