@@ -11,6 +11,7 @@ use GuzzleHttp\Psr7\Request as GuzzleRequest;
 use GuzzleHttp\Psr7\Response;
 use NexCargo\ApiException;
 use NexCargo\Client;
+use NexCargo\Http\ApiTransport;
 use NexCargo\Tests\Fixtures;
 use NexCargo\Models\Address;
 use NexCargo\Models\Dimensions;
@@ -36,8 +37,8 @@ class ClientTest extends TestCase
   public function testConstructorConfiguresBaseUrlAndDefaultHeaders(): void
   {
     $client = new Client('test-key', 'https://api.example.com/base');
-    $httpClientProperty = new \ReflectionProperty(Client::class, 'httpClient');
-    $httpClient = $httpClientProperty->getValue($client);
+    $transport = (new \ReflectionProperty(Client::class, 'transport'))->getValue($client);
+    $httpClient = (new \ReflectionProperty(ApiTransport::class, 'httpClient'))->getValue($transport);
 
     self::assertInstanceOf(GuzzleClient::class, $httpClient);
     self::assertSame('https://api.example.com/base/', (string) $httpClient->getConfig('base_uri'));

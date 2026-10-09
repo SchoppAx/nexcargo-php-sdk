@@ -3,17 +3,14 @@
 namespace NexCargo;
 
 use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\Exception\GuzzleException;
-use GuzzleHttp\Exception\ResponseException;
+use GuzzleHttp\ClientInterface;
 use NexCargo\Models\QuoteRequest;
 use NexCargo\Models\ShipmentRequest;
-use Throwable;
+use NexCargo\Http\ApiTransport;
 
 class Client
 {
-  private string $apiKey;
-  private string $baseUri;
-  private GuzzleClient $httpClient;
+  private ApiTransport $transport;
 
   /**
    * Create a new API client.
@@ -21,18 +18,18 @@ class Client
   public function __construct(
     string $apiKey,
     string $baseUri = 'https://api.camelcloud.example',
-    ?GuzzleClient $httpClient = null
+    ?ClientInterface $httpClient = null
   ) {
-    $this->apiKey = $apiKey;
-    $this->baseUri = rtrim($baseUri, '/') . '/';
-    $this->httpClient = $httpClient ?? new GuzzleClient([
-      'base_uri' => $this->baseUri,
+    $baseUri = rtrim($baseUri, '/') . '/';
+    $httpClient ??= new GuzzleClient([
+      'base_uri' => $baseUri,
       'headers' => [
-        'Authorization' => 'Bearer ' . $this->apiKey,
+        'Authorization' => 'Bearer ' . $apiKey,
         'Accept' => 'application/json',
         'Content-Type' => 'application/json',
       ],
     ]);
+    $this->transport = new ApiTransport($httpClient);
   }
 
   /**
@@ -46,7 +43,7 @@ class Client
   {
     $request = $payload instanceof ShipmentRequest ? $payload : new ShipmentRequest($payload);
 
-    $payload = $this->requestJson(
+    $payload = $this->transport->requestJson(
       'POST',
       '/api/v1/shipments',
       ['json' => $request->toArray()],
@@ -75,7 +72,7 @@ class Client
       static fn ($value) => $value !== null
     );
 
-    return $this->requestJson(
+    return $this->transport->requestJson(
       'GET',
       '/api/v1/shipments',
       $query === [] ? [] : ['query' => $query],
@@ -91,7 +88,7 @@ class Client
    */
   public function getShipment(string|int $identifier): array
   {
-    return $this->requestJson(
+    return $this->transport->requestJson(
       'GET',
       $this->shipmentPath($identifier),
       [],
@@ -107,7 +104,7 @@ class Client
    */
   public function getShipmentLabelContent(string|int $identifier): string
   {
-    $payload = $this->requestJson('GET', $this->shipmentPath($identifier, 'label'), [], 'shipment label');
+    $payload = $this->transport->requestJson('GET', $this->shipmentPath($identifier, 'label'), [], 'shipment label');
     $data = $payload['data'] ?? null;
     $label = is_array($data) ? ($data['label'] ?? null) : null;
 
@@ -141,7 +138,12 @@ class Client
    */
   public function getShipmentTracking(string|int $identifier): array
   {
-    $payload = $this->requestJson('GET', $this->shipmentPath($identifier, 'tracking'), [], 'shipment tracking');
+    $payload = $this->transport->requestJson(
+      'GET',
+      $this->shipmentPath($identifier, 'tracking'),
+      [],
+      'shipment tracking'
+    );
 
     if (!isset($payload['data']) || !is_array($payload['data'])) {
       throw new ApiException('The shipment tracking response is missing tracking data.');
@@ -158,7 +160,7 @@ class Client
    */
   public function cancelShipment(string|int $identifier): array
   {
-    return $this->requestJson('DELETE', $this->shipmentPath($identifier), [], 'shipment cancellation');
+    return $this->transport->requestJson('DELETE', $this->shipmentPath($identifier), [], 'shipment cancellation');
   }
 
   /**
@@ -172,173 +174,12 @@ class Client
   {
     $request = $payload instanceof QuoteRequest ? $payload : new QuoteRequest($payload);
 
-    return $this->requestJson(
+    return $this->transport->requestJson(
       'POST',
       '/api/v1/shipments/quote',
       ['json' => $request->toArray()],
       'shipment quote'
     );
-  }
-
-  /**
-   * Send a request and decode its JSON response, throwing on any HTTP or API error.
-   *
-   * @param array<string, mixed> $options
-   * @return array<string, mixed>
-   * @throws ApiException
-   */
-  private function requestJson(string $method, string $uri, array $options, string $resource): array
-  {
-    $previousException = null;
-    try {
-      $response = $this->httpClient->request($method, $uri, $options);
-    } catch (GuzzleException $exception) {
-      if (!$exception instanceof ResponseException) {
-        throw new ApiException($exception->getMessage(), $exception->getCode(), $exception);
-      }
-
-      $previousException = $exception;
-      $response = $exception->getResponse();
-    }
-
-    $statusCode = $response->getStatusCode();
-    $isHttpError = $statusCode < 200 || $statusCode >= 300;
-    $responseHeaders = $response->getHeaders();
-    $rawResponseBody = (string) $response->getBody();
-
-    try {
-      $payload = json_decode($rawResponseBody, true, 512, JSON_THROW_ON_ERROR);
-    } catch (\JsonException $exception) {
-      if ($isHttpError) {
-        throw new ApiException(
-          "The {$resource} request failed with HTTP status {$statusCode}.",
-          $statusCode,
-          $previousException ?? $exception,
-          responseHeaders: $responseHeaders,
-          statusCode: $statusCode,
-          rawResponseBody: $rawResponseBody
-        );
-      }
-
-      throw new ApiException(
-        "The {$resource} response contains invalid JSON.",
-        0,
-        $exception,
-        responseHeaders: $responseHeaders,
-        statusCode: $statusCode,
-        rawResponseBody: $rawResponseBody
-      );
-    }
-
-    if (!is_array($payload)) {
-      throw new ApiException(
-        "The {$resource} response must contain a JSON object.",
-        $isHttpError ? $statusCode : 0,
-        $previousException,
-        responseHeaders: $responseHeaders,
-        responseBody: $payload,
-        statusCode: $statusCode,
-        rawResponseBody: $rawResponseBody
-      );
-    }
-
-    if ($isHttpError || ($payload['success'] ?? null) !== true) {
-      throw $this->buildErrorException(
-        $payload,
-        $resource,
-        $statusCode,
-        $isHttpError,
-        $responseHeaders,
-        $rawResponseBody,
-        $previousException
-      );
-    }
-
-    return $payload;
-  }
-
-  /**
-   * Build an ApiException describing a failed or unsuccessful response.
-   *
-   * @param array<string, mixed> $payload
-   * @param array<string, array<int, string>> $responseHeaders
-   */
-  private function buildErrorException(
-    array $payload,
-    string $resource,
-    int $statusCode,
-    bool $isHttpError,
-    array $responseHeaders,
-    string $rawResponseBody,
-    ?Throwable $previousException
-  ): ApiException {
-    $error = $payload['error'] ?? null;
-
-    if (!is_array($error)) {
-      $message = $isHttpError
-        ? "The {$resource} request failed with HTTP status {$statusCode}."
-        : "The {$resource} response was not successful.";
-
-      return new ApiException(
-        $message,
-        $statusCode,
-        $previousException,
-        responseHeaders: $responseHeaders,
-        responseBody: $payload,
-        statusCode: $statusCode,
-        rawResponseBody: $rawResponseBody
-      );
-    }
-
-    $message = is_string($error['message'] ?? null)
-      ? $error['message']
-      : "The {$resource} request failed.";
-    $apiCode = is_string($error['code'] ?? null) ? $error['code'] : null;
-    $details = is_array($error['details'] ?? null) ? $error['details'] : [];
-    $requestId = $this->stringMetadata($payload, $error, 'request_id');
-    $timestamp = $this->stringMetadata($payload, $error, 'timestamp');
-    $retryAfter = $this->getRetryAfter($responseHeaders, $error);
-
-    return new ApiException(
-      $message,
-      $statusCode,
-      $previousException,
-      $apiCode,
-      $details,
-      $requestId,
-      $timestamp,
-      $retryAfter,
-      $responseHeaders,
-      $payload,
-      $statusCode,
-      $rawResponseBody
-    );
-  }
-
-  /**
-   * @param array<string, mixed> $payload
-   * @param array<string, mixed> $error
-   */
-  private function stringMetadata(array $payload, array $error, string $key): ?string
-  {
-    $value = $payload[$key] ?? $error[$key] ?? null;
-    return is_string($value) ? $value : null;
-  }
-
-  /**
-   * @param array<string, array<int, string>> $responseHeaders
-   * @param array<string, mixed> $error
-   */
-  private function getRetryAfter(array $responseHeaders, array $error): int|float|string|null
-  {
-    foreach ($responseHeaders as $name => $values) {
-      if (strtolower($name) === 'retry-after' && isset($values[0]) && $values[0] !== '') {
-        return $values[0];
-      }
-    }
-
-    $retryAfter = $error['retry_after'] ?? null;
-    return is_int($retryAfter) || is_float($retryAfter) || is_string($retryAfter) ? $retryAfter : null;
   }
 
   private function shipmentPath(string|int $identifier, ?string $suffix = null): string
