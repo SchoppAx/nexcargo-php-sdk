@@ -33,6 +33,22 @@ use Psr\Http\Message\ResponseInterface;
  */
 class ClientTest extends TestCase
 {
+  public function testConstructorConfiguresBaseUrlAndDefaultHeaders(): void
+  {
+    $client = new Client('test-key', 'https://api.example.com/base');
+    $httpClientProperty = new \ReflectionProperty(Client::class, 'httpClient');
+    $httpClient = $httpClientProperty->getValue($client);
+
+    self::assertInstanceOf(GuzzleClient::class, $httpClient);
+    self::assertSame('https://api.example.com/base/', (string) $httpClient->getConfig('base_uri'));
+
+    $headers = $httpClient->getConfig('headers');
+    self::assertIsArray($headers);
+    self::assertSame('Bearer test-key', $headers['Authorization'] ?? null);
+    self::assertSame('application/json', $headers['Content-Type'] ?? null);
+    self::assertSame('application/json', $headers['Accept'] ?? null);
+  }
+
   /**
    * @param History $history
    */
@@ -427,6 +443,7 @@ class ClientTest extends TestCase
     $response = $client->getShipmentTracking('abc123');
     $request = $this->getHistoryRequest($history);
 
+    $this->assertSame('GET', $request->getMethod());
     $this->assertSame('49111091097', $response['data']['tracking_number']);
     $this->assertSame('/api/v1/shipments/abc123/tracking', (string) $request->getUri()->getPath());
   }
@@ -454,6 +471,7 @@ class ClientTest extends TestCase
 
     $this->assertSame('Shipment cancelled successfully', $cancelled['data']['message']);
     $this->assertSame('DELETE', $request->getMethod());
+    $this->assertSame('/api/v1/shipments/abc123', (string) $request->getUri()->getPath());
   }
 
   /**
@@ -544,6 +562,7 @@ class ClientTest extends TestCase
     $request = $this->getHistoryRequest($history);
 
     $this->assertSame(['success' => true, 'data' => ['amount' => 42.5]], $response);
+    $this->assertSame('POST', $request->getMethod());
     $this->assertSame('/api/v1/shipments/quote', (string) $request->getUri()->getPath());
     $this->assertSame($expectedBody, json_decode((string) $request->getBody(), true));
   }

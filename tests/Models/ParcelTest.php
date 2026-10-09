@@ -20,12 +20,12 @@ class ParcelTest extends TestCase
     $dimensions = new Dimensions(['length' => 60, 'width' => 40, 'height' => 30]);
     $parcel = new Parcel(['weight' => 15.5, 'dimensions' => $dimensions]);
 
-    $result = $parcel->toArray();
-
-    $this->assertSame(15.5, $result['weight']);
-    $this->assertSame(60.0, $result['length']);
-    $this->assertSame(40.0, $result['width']);
-    $this->assertSame(30.0, $result['height']);
+    $this->assertSame([
+      'weight' => 15.5,
+      'length' => 60.0,
+      'width' => 40.0,
+      'height' => 30.0,
+    ], $parcel->toArray());
   }
 
   public function testToArrayWithNoFieldsIsEmpty(): void
