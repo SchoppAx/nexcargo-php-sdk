@@ -6,6 +6,7 @@ use NexCargo\Models\QuoteRequest;
 use NexCargo\Models\Address;
 use NexCargo\Models\Dimensions;
 use NexCargo\Models\Parcel;
+use NexCargo\Models\PalletOptions;
 use NexCargo\Tests\Fixtures;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -44,6 +45,7 @@ class QuoteRequestTest extends TestCase
     $request = new QuoteRequest(Fixtures::quoteData());
     $result = $request->toArray();
 
+    $this->assertSame(Fixtures::quoteData(), $result);
     $this->assertSame('2026-01-15', $result['pickup_date']);
     $this->assertIsArray($result['pickup']);
     $this->assertIsArray($result['packages']);
@@ -141,6 +143,28 @@ class QuoteRequestTest extends TestCase
     $this->assertSame('2026-01-16', $result['delivery_date']);
     $this->assertSame('08:00', $result['delivery_time_from']);
     $this->assertSame('18:00', $result['delivery_time_to']);
+  }
+
+  public function testToArrayNormalizesPalletOptions(): void
+  {
+    $data = Fixtures::quoteData();
+    $data['pallet'] = new PalletOptions([
+      'product' => 'PA',
+      'avis' => false,
+      'insurance_value' => 0,
+      'driver_avis_pickup' => false,
+      'services' => ['tail_lift'],
+    ]);
+
+    $result = (new QuoteRequest($data))->toArray();
+
+    $this->assertSame([
+      'product' => 'PA',
+      'avis' => false,
+      'services' => ['tail_lift'],
+      'insurance_value' => 0.0,
+      'driver_avis_pickup' => false,
+    ], $result['pallet']);
   }
 
   public function testToArrayOmitsNullOptionalFields(): void

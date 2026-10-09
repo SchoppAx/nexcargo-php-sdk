@@ -236,7 +236,13 @@ class ClientTest extends TestCase
   {
     /** @var History $history */
     $history = [];
-    $responsePayload = ['success' => true, 'shipment' => ['id' => 123], 'unknown_field' => ['kept' => true]];
+    $responsePayload = [
+      'success' => true,
+      'shipment' => ['id' => 123],
+      'unknown_field' => ['kept' => true],
+      'data' => ['adjustments' => [['code' => 'PALLET_ADJUSTED']]],
+      'meta' => ['pallet' => ['product' => 'PA', 'validated' => true]],
+    ];
     $handlerStack = HandlerStack::create(new MockHandler([
       new Response(200, [], json_encode($responsePayload, JSON_THROW_ON_ERROR)),
     ]));

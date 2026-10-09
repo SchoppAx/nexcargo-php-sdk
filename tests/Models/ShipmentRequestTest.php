@@ -6,6 +6,7 @@ use NexCargo\Models\ShipmentRequest;
 use NexCargo\Models\Address;
 use NexCargo\Models\Dimensions;
 use NexCargo\Models\Parcel;
+use NexCargo\Models\PalletOptions;
 use NexCargo\Tests\Fixtures;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -129,6 +130,26 @@ class ShipmentRequestTest extends TestCase
   public function testToArrayKeepsPayloadWithoutNewOptionalFieldsUnchanged(): void
   {
     $this->assertSame(Fixtures::shipmentData(), (new ShipmentRequest(Fixtures::shipmentData()))->toArray());
+  }
+
+  public function testToArrayNormalizesPalletOptions(): void
+  {
+    $data = Fixtures::shipmentData();
+    $data['pallet'] = new PalletOptions([
+      'product' => 'PA',
+      'private_recipient' => false,
+      'insurance_value' => 0,
+      'services' => ['tail_lift'],
+    ]);
+
+    $result = (new ShipmentRequest($data))->toArray();
+
+    $this->assertSame([
+      'product' => 'PA',
+      'private_recipient' => false,
+      'services' => ['tail_lift'],
+      'insurance_value' => 0.0,
+    ], $result['pallet']);
   }
 
   public function testToArrayOmitsNullOptionalFieldsAndKeepsEmptyServices(): void
