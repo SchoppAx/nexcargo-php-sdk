@@ -93,7 +93,7 @@ class Client
   {
     return $this->requestJson(
       'GET',
-      '/api/v1/shipments/' . rawurlencode((string) $identifier),
+      $this->shipmentPath($identifier),
       [],
       'shipment retrieval'
     );
@@ -105,9 +105,9 @@ class Client
    * @return string Decoded PDF file contents.
    * @throws ApiException
    */
-  public function getShipmentLabelContent(string $id): string
+  public function getShipmentLabelContent(string|int $identifier): string
   {
-    $payload = $this->requestJson('GET', '/api/v1/shipments/' . $id . '/label', [], 'shipment label');
+    $payload = $this->requestJson('GET', $this->shipmentPath($identifier, 'label'), [], 'shipment label');
     $data = $payload['data'] ?? null;
     $label = is_array($data) ? ($data['label'] ?? null) : null;
 
@@ -139,9 +139,9 @@ class Client
    * @return array<string, mixed>
    * @throws ApiException
    */
-  public function getShipmentTracking(string $id): array
+  public function getShipmentTracking(string|int $identifier): array
   {
-    $payload = $this->requestJson('GET', '/api/v1/shipments/' . $id . '/tracking', [], 'shipment tracking');
+    $payload = $this->requestJson('GET', $this->shipmentPath($identifier, 'tracking'), [], 'shipment tracking');
 
     if (!isset($payload['data']) || !is_array($payload['data'])) {
       throw new ApiException('The shipment tracking response is missing tracking data.');
@@ -156,9 +156,9 @@ class Client
    * @return array<string, mixed>
    * @throws ApiException
    */
-  public function cancelShipment(string $id): array
+  public function cancelShipment(string|int $identifier): array
   {
-    return $this->requestJson('DELETE', '/api/v1/shipments/' . $id, [], 'shipment cancellation');
+    return $this->requestJson('DELETE', $this->shipmentPath($identifier), [], 'shipment cancellation');
   }
 
   /**
@@ -339,5 +339,12 @@ class Client
 
     $retryAfter = $error['retry_after'] ?? null;
     return is_int($retryAfter) || is_float($retryAfter) || is_string($retryAfter) ? $retryAfter : null;
+  }
+
+  private function shipmentPath(string|int $identifier, ?string $suffix = null): string
+  {
+    $path = '/api/v1/shipments/' . rawurlencode((string) $identifier);
+
+    return $suffix === null ? $path : $path . '/' . $suffix;
   }
 }

@@ -841,6 +841,38 @@ class ClientTest extends TestCase
     $this->assertSame('/api/v1/shipments/abc123', (string) $request->getUri()->getPath());
   }
 
+  public function testShipmentSubPathsEncodeIdentifiersAndAcceptIntegers(): void
+  {
+    $paths = [];
+    $label = ['success' => true, 'data' => ['label' => [
+      'format' => 'pdf', 'encoding' => 'base64', 'content' => base64_encode('pdf'),
+    ]]];
+    $tracking = ['success' => true, 'data' => ['status' => 'IN_DELIVERY']];
+    $mock = new MockHandler([
+      new Response(200, [], json_encode($label, JSON_THROW_ON_ERROR)),
+      new Response(200, [], json_encode($tracking, JSON_THROW_ON_ERROR)),
+      new Response(200, [], json_encode(['success' => true], JSON_THROW_ON_ERROR)),
+    ]);
+    $handlerStack = HandlerStack::create($mock);
+    $handlerStack->push(Middleware::mapRequest(static function (RequestInterface $request) use (&$paths) {
+      $paths[] = $request->getUri()->getPath();
+
+      return $request;
+    }));
+    $client = new Client('test-key', 'https://api.example.com', new GuzzleClient(['handler' => $handlerStack]));
+
+    $client->getShipmentLabelContent('a/b #1');
+    $client->getShipmentTracking(123);
+    $client->cancelShipment('x?y');
+
+    $this->assertSame([
+      '/api/v1/shipments/a%2Fb%20%231/label',
+      '/api/v1/shipments/123/tracking',
+      '/api/v1/shipments/x%3Fy',
+    ], $paths);
+  }
+
+
   /**
    * @return iterable<string, array{0: QuoteRequest, 1: array<string, mixed>}>
    */
