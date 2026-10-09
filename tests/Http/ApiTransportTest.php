@@ -42,6 +42,13 @@ final class ApiTransportTest extends TestCase
     $transport->requestJson('GET', '/x', [], 'thing');
   }
 
+  public function testSuccessfulResponseWithoutSuccessKeyIsReturned(): void
+  {
+    $transport = $this->transport([new Response(200, [], '{"data":{"a":1}}')]);
+
+    $this->assertSame(['data' => ['a' => 1]], $transport->requestJson('GET', '/x', [], 'thing'));
+  }
+
   public function testInvalidJsonOnSuccessThrows(): void
   {
     $transport = $this->transport([new Response(200, [], 'nope')]);

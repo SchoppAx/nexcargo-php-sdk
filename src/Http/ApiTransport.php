@@ -76,7 +76,7 @@ final class ApiTransport
       );
     }
 
-    if ($isHttpError || ($payload['success'] ?? null) !== true) {
+    if ($isHttpError || (array_key_exists('success', $payload) && $payload['success'] !== true)) {
       throw $this->buildErrorException(
         $payload,
         $resource,
