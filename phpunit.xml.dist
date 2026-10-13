@@ -11,4 +11,10 @@
       <directory>src</directory>
     </include>
   </source>
+
+  <php>
+    <env name="NEXCARGO_SANDBOX_API_KEY" value="your-sandbox-api-key"/>
+    <env name="NEXCARGO_BASE_URI" value="https://your-sandbox-host.example.com"/>
+    <env name="NEXCARGO_ALLOW_WRITE" value="false"/>
+  </php>
 </phpunit>

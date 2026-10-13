@@ -38,7 +38,9 @@
     "lint:check": "phpcs --standard=phpcs.xml.dist",
     "lint:fix": "phpcbf --standard=phpcs.xml.dist",
     "quality:check": "phpstan analyse -c phpstan.neon.dist --memory-limit=1G",
-    "test": "phpunit --configuration=phpunit.xml.dist",
+    "test": "phpunit --configuration=phpunit.xml.dist --display-skipped",
+    "test:integration:sandbox": "vendor/bin/phpunit --group sandbox --testdox --colors=always --display-skipped --display-warnings --display-deprecations",
+    "test:sandbox": "@test:integration:sandbox",
     "test:coverage": "phpunit --configuration=phpunit.xml.dist --coverage-clover=coverage.xml --coverage-text",
     "test:coverage-html": "phpunit --configuration=phpunit.xml.dist --coverage-html ./coverage-report",
     "test:all" : [

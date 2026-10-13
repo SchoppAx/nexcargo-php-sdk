@@ -5,12 +5,16 @@ namespace NexCargo\Models;
 class Address
 {
   private ?string $name = null;
+  private ?string $name2 = null;
   private ?string $street = null;
   private ?string $houseNumber = null;
   private ?string $zipcode = null;
   private ?string $city = null;
   private ?string $country = null;
   private ?string $phone = null;
+  private ?string $email = null;
+  private ?string $notes = null;
+  private ?string $contactPerson = null;
 
   /**
    * @param array<string, mixed> $data
@@ -32,12 +36,16 @@ class Address
   {
     return array_filter([
       'name' => $this->name,
+      'name2' => $this->name2,
       'street' => $this->street,
       'house_number' => $this->houseNumber,
       'zipcode' => $this->zipcode,
       'city' => $this->city,
       'country' => $this->country,
       'phone' => $this->phone,
+      'email' => $this->email,
+      'notes' => $this->notes,
+      'contact_person' => $this->contactPerson,
     ], static fn ($value) => $value !== null);
   }
 }

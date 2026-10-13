@@ -6,7 +6,7 @@
 .phpunit.result.cache
 .phpunit.cache/
 coverage.xml
-.env
+.env*
 
 # IDE / editor
 .vscode/
@@ -21,3 +21,4 @@ Thumbs.db
 
 # Coverage report
 /coverage-report/
+phpunit.xml
