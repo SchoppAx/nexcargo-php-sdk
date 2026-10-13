@@ -63,7 +63,6 @@ Requests accept model objects or plain arrays.
 use NexCargo\Models\Address;
 use NexCargo\Models\Dimensions;
 use NexCargo\Models\Parcel;
-use NexCargo\Models\QuoteRequest;
 use NexCargo\Models\ShipmentRequest;
 
 $pickup = new Address([
@@ -122,6 +121,8 @@ The SDK does not truncate or validate values (for example the documented limits 
 The quote endpoint uses the same request shape as shipment creation, but the carrier field is optional.
 
 ```php
+use NexCargo\Models\QuoteRequest;
+
 unset($payload['carrier']);
 $quote = $client->quoteShipment(new QuoteRequest($payload));
 ```
@@ -142,9 +143,19 @@ $list = $client->listShipments([
 $shipment = $client->getShipment('ORDER-1/A');
 ```
 
-Documented `status` values: `UNPROCESSED`, `STATION_OUTBOUND`, `IN_DELIVERY`, `DELIVERED`, `CANCELLED`. Values are passed through as given, not validated.
+Documented `status` values are:
 
-Only `status`, `carrier`, `from_date`, `to_date`, `reference`, `per_page` and `page` are sent; other keys are ignored, `null` values are dropped and `0` is kept. The identifier may be the internal shipment id, the tracking number or your customer reference; it is URL-encoded.
+- `UNPROCESSED`,
+- `STATION_OUTBOUND`,
+- `IN_DELIVERY`,
+- `DELIVERED`,
+- `CANCELLED`
+
+Values are passed through as given, not validated.
+
+Only `status`, `carrier`, `from_date`, `to_date`, `reference`, `per_page` and `page` are sent. Other keys are ignored, `null` values are dropped and `0` is kept.
+
+The identifier may be the internal shipment ID, tracking number or customer reference. It is URL-encoded by the SDK.
 
 - `tracking_number` is the recommended persistent key. Store it.
 - The internal shipment `id` can change after a carrier reconciliation.
@@ -161,13 +172,32 @@ $tracking = $client->getShipmentTracking($trackingNumber);
 $cancelled = $client->cancelShipment($trackingNumber);
 ```
 
-`getShipmentLabelContent()` returns the decoded PDF bytes and throws `ApiException` if the label is missing or `null`, the format or encoding is not PDF/base64, the content is empty, or the base64 is invalid. The SDK does not save files.
+`getShipmentLabelContent()` returns the decoded PDF bytes and throws `ApiException` if:
 
-Cancelling a shipment that cannot be cancelled returns the API error `CANCEL_NOT_SUPPORTED` (HTTP 409).
+- the label is missing or `null`;
+- the format or encoding is not PDF/base64;
+- the content is empty;
+- the base64 content is invalid.
+
+The SDK does not save files.
+
+Cancelling a shipment that cannot be cancelled returns the API error `CANCEL_NOT_SUPPORTED` with HTTP status `409`.
 
 ### CTL pallet options
 
-Add `pallet` to a shipment or quote request, as `PalletOptions` or an array. Supported fields: `product`, `private_recipient`, `avis`, `fixed_date`, `fixed_time`, `services`, `insurance`, `insurance_value`, `driver_avis_pickup`.
+Add `pallet` to a shipment or quote request as a `PalletOptions` object or an array.
+
+Supported fields are:
+
+- `product`
+- `private_recipient`
+- `avis`
+- `fixed_date`
+- `fixed_time`
+- `services`
+- `insurance`
+- `insurance_value`
+- `driver_avis_pickup`
 
 ```php
 use NexCargo\Models\PalletOptions;
@@ -232,3 +262,88 @@ Invalid or empty error bodies do not cause a second error.
 On HTTP 429 (`RATE_LIMIT_EXCEEDED`), `getRetryAfter()` returns `Retry-After` from the header, falling back to `error.retry_after` from the body. `getRateLimitHeaders()` returns the `X-RateLimit-*` response headers.
 
 The SDK never retries automatically, and `POST /shipments` must never be retried blindly because it can create duplicate shipments. Check with `listShipments(['reference' => ...])` before repeating a booking.
+
+## Testing
+
+Run the regular unit test suite with:
+
+```bash
+composer test
+```
+
+Run all unit tests including lint and quality with:
+
+```bash
+composer test:all
+```
+
+### Sandbox integration test
+
+The Sandbox integration test performs a complete shipment lifecycle against the configured NexCargo Sandbox API:
+
+1. requests a quote
+2. creates a shipment
+3. retrieves the shipment by tracking number and customer reference
+4. searches for the shipment using the list endpoint
+5. downloads and validates the PDF label
+6. retrieves tracking information
+7. cancels the created shipment.
+
+The test performs real write operations against the configured API. Always use a Sandbox API key and Sandbox base URL.
+
+#### Configuration
+
+Copy the PHPUnit configuration template before running the test:
+
+```bash
+cp phpunit.xml.dist phpunit.xml
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item phpunit.xml.dist phpunit.xml
+```
+
+Add or update the following environment variables in the `<php>` section of your local `phpunit.xml`:
+
+```xml
+<php>
+  <env name="NEXCARGO_SANDBOX_API_KEY" value="your-sandbox-api-key"/>
+  <env name="NEXCARGO_BASE_URI" value="https://your-sandbox-host.example.com"/>
+  <env name="NEXCARGO_ALLOW_WRITE" value="true"/>
+</php>
+```
+
+The base URI must contain the Sandbox host without the `/api/v1` path.
+
+`NEXCARGO_ALLOW_WRITE` is an explicit safety switch. The Sandbox lifecycle test is skipped unless it is set to `true`.
+
+> [!WARNING]
+> The local `phpunit.xml` can contain sensitive credentials and must not be committed. Only `phpunit.xml.dist`, without real credentials, should be version controlled.
+
+The version-controlled `phpunit.xml.dist` should contain the required variable names without real credentials and keep write access disabled by default:
+
+```xml
+<php>
+  <env name="NEXCARGO_SANDBOX_API_KEY" value=""/>
+  <env name="NEXCARGO_BASE_URI" value=""/>
+  <env name="NEXCARGO_ALLOW_WRITE" value="false"/>
+</php>
+```
+
+Alternatively, provide the credentials through environment variables.
+
+#### Running the Sandbox test
+
+Run the configured Composer script:
+
+```bash
+composer test:sandbox
+```
+
+The test belongs to both the `integration` and `sandbox` PHPUnit groups.
+
+The test is skipped when one of the required variables is missing or when `NEXCARGO_ALLOW_WRITE` is not set to `true`.
+
+The test attempts to cancel the created Sandbox shipment even if a later assertion or API request fails. If cleanup also fails, the tracking number and cleanup error are written to STDERR for manual investigation.

@@ -2,6 +2,8 @@
 
 namespace NexCargo\Tests;
 
+use DateTimeImmutable;
+
 final class Fixtures
 {
   /** @return array<string, string> */
@@ -25,14 +27,19 @@ final class Fixtures
   }
 
   /** @return array<string, mixed> */
-  public static function shipmentData(): array
+  public static function shipmentData(bool $useDynamicDates = false): array
   {
+    $today = $useDynamicDates ? new DateTimeImmutable('today') : new DateTimeImmutable('2026-01-14');
+
+    $pickupDate = self::nextWorkingDay($today);
+    $deliveryDate = self::nextWorkingDay($pickupDate);
+
     return [
       'carrier' => 'auto',
-      'pickup_date' => '2026-01-15',
+      'pickup_date' => $pickupDate->format('Y-m-d'),
       'pickup_time_from' => '09:00',
       'pickup_time_to' => '12:00',
-      'delivery_date' => '2026-01-16',
+      'delivery_date' => $deliveryDate->format('Y-m-d'),
       'delivery_time_from' => '08:00',
       'delivery_time_to' => '18:00',
       'pickup' => self::addressData(),
@@ -42,10 +49,20 @@ final class Fixtures
   }
 
   /** @return array<string, mixed> */
-  public static function quoteData(): array
+  public static function quoteData(bool $useDynamicDates = false): array
   {
-    $data = self::shipmentData();
+    $data = self::shipmentData($useDynamicDates);
     unset($data['carrier']);
     return $data;
+  }
+
+  private static function nextWorkingDay(
+    DateTimeImmutable $date
+  ): DateTimeImmutable {
+    do {
+      $date = $date->modify('+1 day');
+    } while ((int) $date->format('N') > 5);
+
+    return $date;
   }
 }
